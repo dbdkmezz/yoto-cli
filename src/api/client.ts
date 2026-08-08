@@ -32,10 +32,12 @@ const AUTH_BASE_URL = "https://login.yotoplay.com";
 const API_BASE_URL = "https://api.yotoplay.com";
 
 // Library read + Make-Your-Own content management (upload/create/edit) +
-// device control (needed for the MQTT connection behind `device positions`/
-// `device sync`) + a refresh token.
+// device scopes (list/status/control — per yoto.dev these are three
+// distinct scopes, not one; every `device` subcommand needs at least one
+// of them) + a refresh token.
 const DEFAULT_SCOPE =
-  "offline_access family:library:view user:content:manage family:devices:control";
+  "offline_access family:library:view user:content:manage " +
+  "family:devices:view family:device-status:view family:devices:control";
 
 export interface YotoClientConfig {
   clientId: string;
