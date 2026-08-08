@@ -169,9 +169,9 @@ yoto device sync <sourceDeviceId> --to <id1,id2>
 
 `positions` and `sync` talk to Yoto's players over MQTT (not the REST API) to
 get/set exact seconds-level position — that's the only way to resume mid-track.
-All `device` commands need one of Yoto's `family:devices:view`,
-`family:device-status:view`, or `family:devices:control` scopes; if you
-logged in before this CLI version requested them, run `yoto login` again.
+All `device` commands need Yoto's `family:devices:view` and/or
+`family:devices:control` scopes; if you logged in before this CLI version
+requested them, run `yoto login` again.
 
 Run `yoto --help` for the full command list.
 
