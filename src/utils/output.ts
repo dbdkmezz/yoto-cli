@@ -1,7 +1,5 @@
 // Simple output helpers for CLI
 
-import { createInterface } from "readline/promises";
-
 export function success(message: string): void {
   console.log(`✓ ${message}`);
 }
@@ -35,14 +33,4 @@ export function table(
 
 export function json(data: unknown): void {
   console.log(JSON.stringify(data, null, 2));
-}
-
-export async function confirm(message: string): Promise<boolean> {
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  try {
-    const answer = await rl.question(`${message} (y/N) `);
-    return answer.trim().toLowerCase().startsWith("y");
-  } finally {
-    rl.close();
-  }
 }

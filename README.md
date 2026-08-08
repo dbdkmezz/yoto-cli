@@ -163,12 +163,17 @@ yoto device volume <deviceId> <0-100>
 
 yoto device positions                        # where is every device right now?
 yoto device positions <cardId>               # ...restricted to devices on this card
-yoto device sync <sourceDeviceId> --all      # move every other device to that position
-yoto device sync <sourceDeviceId> --to <id1,id2>
+yoto device transfer <sourceDeviceId>        # move the card to another device without losing your place
 ```
 
-`positions` and `sync` talk to Yoto's players over MQTT (not the REST API) to
-get/set exact seconds-level position — that's the only way to resume mid-track.
+`positions` and `transfer` talk to Yoto's players over MQTT (not the REST
+API) to get/set exact seconds-level position — that's the only way to resume
+mid-track. Yoto players are a single physical card moved between devices, so
+`transfer` doesn't copy a position instantly — it watches: run it while the
+source device is still playing, physically move the card to another device,
+and it jumps that device to the same chapter/track/second the instant it
+picks the card up, instead of restarting from the top.
+
 All `device` commands need Yoto's `family:devices:view` and/or
 `family:devices:control` scopes; if you logged in before this CLI version
 requested them, run `yoto login` again.

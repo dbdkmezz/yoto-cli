@@ -1,5 +1,5 @@
 import mqtt from "mqtt";
-import { DeviceEventSchema, type DeviceEvent } from "./schemas.ts";
+import { DeviceEventSchema, hasCard, type DeviceEvent } from "./schemas.ts";
 
 // Yoto players don't expose live playback position over REST — only via
 // this AWS IoT MQTT broker. Endpoint and auth scheme are from
@@ -90,44 +90,127 @@ export function toCardUri(cardId: string): string {
   return `https://yoto.io/${cardId}`;
 }
 
-export interface CardStartCommand {
-  uri: string;
+const REFRESH_INTERVAL_MS = 10_000;
+
+export interface CardTransferOutcome {
+  deviceId: string;
   chapterKey?: string;
   trackKey?: string;
-  secondsIn?: number;
+  secondsIn: number;
 }
 
-// Resuming/seeking on a Yoto player is done by re-issuing card/start at the
-// desired chapter/track/second — there's no separate seek command. Resolves
-// true once the broker has accepted the publish; Yoto's MQTT docs don't
-// document an ack topic to confirm the device actually acted on it.
-export async function setDevicePlayback(
-  deviceId: string,
+// Yoto players are a single physical card moved between devices — only one
+// device is ever "on" a card at a time, so there's no moment where both a
+// live source position and a live target both exist for a plain "copy
+// position now" command to work. This instead watches: keeps refreshing the
+// source's position (in case the user leaves it playing a while before
+// moving the card) and watches every candidate device for that same cardId
+// to show up (the user physically moving the card there). The instant it
+// does, it re-issues card/start on that device — which is already open and
+// mid-subscribe, so no reconnect — at the source's estimated current
+// position (extrapolated forward if the source was still "playing" when we
+// last heard from it; frozen as-is if it was paused/stopped).
+export async function watchForCardTransfer(
+  sourceDeviceId: string,
+  initialSourceState: DeviceEvent & { cardId: string },
+  candidateDeviceIds: string[],
   accessToken: string,
-  command: CardStartCommand
-): Promise<boolean> {
-  const client = connectToDevice(deviceId, accessToken);
+  timeoutMs: number
+): Promise<CardTransferOutcome | null> {
+  const cardId = initialSourceState.cardId;
+  let latest: DeviceEvent = initialSourceState;
+
+  const sourceClient = connectToDevice(sourceDeviceId, accessToken);
+  const candidates = candidateDeviceIds.map((deviceId) => ({
+    deviceId,
+    client: connectToDevice(deviceId, accessToken),
+  }));
 
   return new Promise((resolve) => {
     let settled = false;
-    const finish = (result: boolean) => {
+    const timers: ReturnType<typeof setInterval>[] = [];
+
+    const finish = (result: CardTransferOutcome | null) => {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
-      client.end(true);
+      timers.forEach(clearInterval);
+      sourceClient.end(true);
+      candidates.forEach(({ client }) => client.end(true));
       resolve(result);
     };
 
-    const timeout = setTimeout(() => finish(false), RESPONSE_TIMEOUT_MS);
+    const timeout = setTimeout(() => finish(null), timeoutMs);
 
-    client.on("connect", () => {
-      client.publish(
-        `device/${deviceId}/command/card/start`,
-        JSON.stringify(command),
-        (err) => finish(!err)
-      );
+    sourceClient.on("connect", () => {
+      sourceClient.subscribe(`device/${sourceDeviceId}/data/events`, () => {
+        const request = () =>
+          sourceClient.publish(`device/${sourceDeviceId}/command/events/request`, "");
+        request();
+        timers.push(setInterval(request, REFRESH_INTERVAL_MS));
+      });
+    });
+    sourceClient.on("message", (_topic, payload) => {
+      try {
+        const event = DeviceEventSchema.parse(JSON.parse(payload.toString()));
+        if (hasCard(event) && event.cardId === cardId) latest = event;
+      } catch {
+        // Malformed payload — keep the last good snapshot rather than losing it.
+      }
+    });
+    sourceClient.on("error", () => {
+      // Source hiccup: stop refreshing its estimate, but don't cancel the
+      // whole watch over it — the target device is what matters now.
     });
 
-    client.on("error", () => finish(false));
+    for (const { deviceId, client } of candidates) {
+      client.on("connect", () => {
+        client.subscribe(`device/${deviceId}/data/events`, () => {
+          const request = () =>
+            client.publish(`device/${deviceId}/command/events/request`, "");
+          request();
+          timers.push(setInterval(request, REFRESH_INTERVAL_MS));
+        });
+      });
+
+      client.on("message", (_topic, payload) => {
+        if (settled) return;
+        let event: DeviceEvent;
+        try {
+          event = DeviceEventSchema.parse(JSON.parse(payload.toString()));
+        } catch {
+          return;
+        }
+        if (!hasCard(event) || event.cardId !== cardId) return;
+
+        const stillPlaying = latest.playbackStatus === "playing";
+        const elapsed =
+          stillPlaying && latest.eventUtc !== undefined
+            ? Math.max(0, Math.round(Date.now() / 1000 - latest.eventUtc))
+            : 0;
+        const secondsIn = (latest.position ?? 0) + elapsed;
+
+        client.publish(
+          `device/${deviceId}/command/card/start`,
+          JSON.stringify({
+            uri: toCardUri(cardId),
+            chapterKey: latest.chapterKey,
+            trackKey: latest.trackKey,
+            secondsIn,
+          }),
+          () =>
+            finish({
+              deviceId,
+              chapterKey: latest.chapterKey,
+              trackKey: latest.trackKey,
+              secondsIn,
+            })
+        );
+      });
+
+      client.on("error", () => {
+        // One candidate having trouble shouldn't cancel watching the rest.
+      });
+    }
   });
 }

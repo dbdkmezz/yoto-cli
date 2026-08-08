@@ -1,9 +1,7 @@
 import { getAuthenticatedClient } from "./auth.ts";
-import { info, table, json, success, error, confirm } from "../utils/output.ts";
-import { getDevicePlaybackState, setDevicePlayback, toCardUri } from "../api/mqtt.ts";
+import { info, table, json, success, error } from "../utils/output.ts";
+import { getDevicePlaybackState, watchForCardTransfer } from "../api/mqtt.ts";
 import { hasCard, type Device, type DeviceEvent } from "../api/schemas.ts";
-
-const STALE_THRESHOLD_SECONDS = 30;
 
 function formatDuration(seconds: number): string {
   return `${Math.floor(seconds / 60)}:${String(Math.round(seconds % 60)).padStart(2, "0")}`;
@@ -201,19 +199,12 @@ export async function getDevicePositions(
   );
 }
 
-export async function syncDevicePosition(
-  sourceDeviceId: string,
-  options: { to?: string; all?: boolean; yes?: boolean; json?: boolean }
-): Promise<void> {
-  if (!options.to && !options.all) {
-    error("Specify --to <deviceId,...> or --all.");
-    process.exit(1);
-  }
-  if (options.to && options.all) {
-    error("Pass either --to or --all, not both.");
-    process.exit(1);
-  }
+const DEFAULT_TRANSFER_TIMEOUT_SECONDS = 300;
 
+export async function transferDevicePosition(
+  sourceDeviceId: string,
+  options: { to?: string; timeout?: string; json?: boolean }
+): Promise<void> {
   const client = await getAuthenticatedClient();
   const accessToken = client.getTokens().accessToken;
   if (!accessToken) {
@@ -221,7 +212,14 @@ export async function syncDevicePosition(
     process.exit(1);
   }
 
-  const { devices } = await client.getDevices();
+  const [{ devices }, cardTitles] = await Promise.all([
+    client.getDevices(),
+    client
+      .listContent()
+      .then((res) => new Map(res.cards.map((c) => [c.cardId, c.title])))
+      .catch(() => new Map<string, string>()),
+  ]);
+
   const source = devices.find((d) => d.deviceId === sourceDeviceId);
   if (!source) {
     error(`Device ${sourceDeviceId} not found. Run 'yoto device list'.`);
@@ -230,81 +228,75 @@ export async function syncDevicePosition(
 
   const sourceState = await getDevicePlaybackState(sourceDeviceId, accessToken);
   if (!hasCard(sourceState)) {
-    error(`${source.name} isn't currently on a card — nothing to sync.`);
+    error(`${source.name} isn't currently on a card — nothing to transfer.`);
     process.exit(1);
   }
 
-  const targetIds = options.all
-    ? devices.filter((d) => d.deviceId !== sourceDeviceId).map((d) => d.deviceId)
-    : (options.to ?? "").split(",").map((id) => id.trim()).filter(Boolean);
+  const candidateIds = options.to
+    ? options.to.split(",").map((id) => id.trim()).filter(Boolean)
+    : devices.filter((d) => d.deviceId !== sourceDeviceId).map((d) => d.deviceId);
 
-  const targets: Device[] = [];
-  for (const id of targetIds) {
+  const candidates: Device[] = [];
+  for (const id of candidateIds) {
     const device = devices.find((d) => d.deviceId === id);
     if (!device) {
       error(`Device ${id} not found. Run 'yoto device list'.`);
       process.exit(1);
     }
-    if (device.deviceId === sourceDeviceId) continue; // --to may list the source itself; skip rather than syncing to itself
-    targets.push(device);
+    if (device.deviceId === sourceDeviceId) continue; // --to may list the source itself; skip watching itself
+    candidates.push(device);
   }
 
-  if (targets.length === 0) {
-    info("No target devices to sync.");
+  if (candidates.length === 0) {
+    info("No candidate devices to watch.");
     return;
   }
 
-  const position = sourceState.position ?? 0;
-  const stale = (ageSeconds(sourceState.eventUtc) ?? 0) > STALE_THRESHOLD_SECONDS;
+  const timeoutSeconds = options.timeout
+    ? parseInt(options.timeout, 10)
+    : DEFAULT_TRANSFER_TIMEOUT_SECONDS;
 
-  if (!options.yes) {
-    const staleNote = stale ? ` — ${source.name} may not be playing right now` : "";
-    const ok = await confirm(
-      `This will move ${targets.length} other device${targets.length === 1 ? "" : "s"} to ` +
-        `${sourceState.cardId} ch${sourceState.chapterKey ?? "?"}/tr${sourceState.trackKey ?? "?"} ` +
-        `(@${formatDuration(position)}, as of ${formatAge(sourceState.eventUtc)}${staleNote}):\n` +
-        `  ${targets.map((t) => t.name).join(", ")}\nContinue?`
-    );
-    if (!ok) {
-      info("Aborted.");
-      return;
-    }
-  }
+  const cardLabel = cardTitles.get(sourceState.cardId)
+    ? `"${cardTitles.get(sourceState.cardId)}"`
+    : sourceState.cardId;
 
-  const uri = toCardUri(sourceState.cardId);
-  const results = await Promise.allSettled(
-    targets.map((target) =>
-      setDevicePlayback(target.deviceId, accessToken, {
-        uri,
-        chapterKey: sourceState.chapterKey,
-        trackKey: sourceState.trackKey,
-        secondsIn: position,
-      })
-    )
+  info(`Watching for ${cardLabel} to start on: ${candidates.map((c) => c.name).join(", ")}.`);
+  info(`Move the card now — waiting up to ${timeoutSeconds}s. Ctrl+C to cancel.`);
+
+  const outcome = await watchForCardTransfer(
+    sourceDeviceId,
+    sourceState,
+    candidates.map((c) => c.deviceId),
+    accessToken,
+    timeoutSeconds * 1000
   );
 
-  const outcomes = targets.map((target, i) => {
-    const result = results[i];
-    const ok = result !== undefined && result.status === "fulfilled" && result.value === true;
-    return { device: target, ok };
-  });
+  if (!outcome) {
+    if (options.json) {
+      json({ ok: false, reason: "timeout" });
+      return;
+    }
+    error(`Timed out after ${timeoutSeconds}s — no device picked up the card.`);
+    process.exit(1);
+  }
+
+  const target = candidates.find((c) => c.deviceId === outcome.deviceId);
+  const targetName = target?.name ?? outcome.deviceId;
 
   if (options.json) {
-    json(
-      outcomes.map(({ device, ok }) => ({
-        deviceId: device.deviceId,
-        name: device.name,
-        ok,
-      }))
-    );
+    json({
+      ok: true,
+      deviceId: outcome.deviceId,
+      name: targetName,
+      chapterKey: outcome.chapterKey,
+      trackKey: outcome.trackKey,
+      secondsIn: outcome.secondsIn,
+    });
     return;
   }
 
-  for (const { device, ok } of outcomes) {
-    if (ok) {
-      success(`${device.name} -> done`);
-    } else {
-      error(`${device.name} -> failed`);
-    }
-  }
+  success(
+    `${targetName} picked up the card — jumped to ` +
+      `ch${outcome.chapterKey ?? "?"}/tr${outcome.trackKey ?? "?"} @${formatDuration(outcome.secondsIn)}`
+  );
 }

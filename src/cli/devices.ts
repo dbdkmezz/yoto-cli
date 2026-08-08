@@ -4,7 +4,7 @@ import {
   getDeviceStatus,
   sendCommand,
   getDevicePositions,
-  syncDevicePosition,
+  transferDevicePosition,
 } from "../commands/devices.ts";
 
 export function registerDeviceCommands(program: Command): void {
@@ -145,35 +145,38 @@ Examples:
     .action((cardId, options) => getDevicePositions(cardId, { json: options.json }));
 
   device
-    .command("sync <sourceDeviceId>")
-    .description("Move other devices to the card/chapter/track/position a device is at")
-    .option("--to <deviceIds>", "Comma-separated target device IDs")
-    .option("--all", "Target every other device")
-    .option("--yes", "Skip the confirmation prompt")
+    .command("transfer <sourceDeviceId>")
+    .description("Watch for another device to pick up the card a device is on, and jump it to the same position")
+    .option("--to <deviceIds>", "Comma-separated candidate device IDs (default: all other devices)")
+    .option("--timeout <seconds>", "How long to watch before giving up (default: 300)")
     .option("--json", "Output as JSON")
     .addHelpText(
       "after",
       `
 Arguments:
-  sourceDeviceId    The device whose current position to copy
+  sourceDeviceId    The device currently playing the card to transfer
 
-Exactly one of --to or --all is required. Without --yes, prints what will
-happen and asks for confirmation before touching other devices.
+Yoto players are a single physical card moved between devices — only one
+device is ever "on" a card at a time, so there's no moment where you could
+just copy a position across. This instead captures the source device's
+live position, then watches your other devices for that same card to
+start (you physically move it there) and immediately jumps the receiving
+device to the same chapter/track/second, instead of restarting from the
+top.
 
 Requires the 'family:devices:control' scope — if this errors with an auth
 or scope problem, run 'yoto login' again to pick it up.
 
 Examples:
-  $ yoto device sync Y1234 --all
-  $ yoto device sync Y1234 --to Y5678,Y9999
-  $ yoto device sync Y1234 --to Y5678 --yes
+  $ yoto device transfer Y1234
+  $ yoto device transfer Y1234 --to Y5678
+  $ yoto device transfer Y1234 --timeout 120
 `
     )
     .action((sourceDeviceId, options) =>
-      syncDevicePosition(sourceDeviceId, {
+      transferDevicePosition(sourceDeviceId, {
         to: options.to,
-        all: options.all,
-        yes: options.yes,
+        timeout: options.timeout,
         json: options.json,
       })
     );
