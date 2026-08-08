@@ -218,6 +218,23 @@ export const GetDevicesResponseSchema = z.object({
   devices: z.array(DeviceSchema),
 });
 
+// Live playback state, pushed by the device itself over MQTT
+// (`/device/{deviceId}/data/events`) rather than fetched via REST — this is
+// the only source for seconds-level position and for how stale a report is
+// (`eventUtc`). .passthrough() because the on-wire payload isn't formally
+// documented; unknown fields shouldn't break parsing.
+export const DeviceEventSchema = z.object({
+  cardId: z.string().optional(),
+  chapterKey: z.string().optional(),
+  chapterTitle: z.string().optional(),
+  trackKey: z.string().optional(),
+  trackTitle: z.string().optional(),
+  position: z.number().optional(),
+  trackLength: z.number().optional(),
+  playbackStatus: z.string().optional(),
+  eventUtc: z.string().optional(),
+}).passthrough();
+
 // ============ API Error Schema ============
 
 export const ApiErrorSchema = z.object({
@@ -251,6 +268,7 @@ export type UploadUrlResponse = z.infer<typeof UploadUrlResponseSchema>;
 export type TranscodedAudioResponse = z.infer<typeof TranscodedAudioResponseSchema>;
 export type Device = z.infer<typeof DeviceSchema>;
 export type DeviceStatus = z.infer<typeof DeviceStatusSchema>;
+export type DeviceEvent = z.infer<typeof DeviceEventSchema>;
 export type GetDevicesResponse = z.infer<typeof GetDevicesResponseSchema>;
 export type ApiError = z.infer<typeof ApiErrorSchema>;
 

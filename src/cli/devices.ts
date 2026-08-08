@@ -3,6 +3,8 @@ import {
   listDevices,
   getDeviceStatus,
   sendCommand,
+  getDevicePositions,
+  syncDevicePosition,
 } from "../commands/devices.ts";
 
 export function registerDeviceCommands(program: Command): void {
@@ -119,4 +121,60 @@ Examples:
 `
     )
     .action((deviceId, level) => sendCommand(deviceId, "volume", level));
+
+  device
+    .command("positions [cardId]")
+    .description("Show where each device is (card, chapter, track, exact position)")
+    .option("--json", "Output as JSON")
+    .addHelpText(
+      "after",
+      `
+Arguments:
+  cardId    Optional playlist card ID; if given, only devices currently on
+            that card are shown (others are omitted)
+
+Requires the 'family:devices:control' scope — if this errors with an auth
+or scope problem, run 'yoto login' again to pick it up.
+
+Examples:
+  $ yoto device positions
+  $ yoto device positions 5ukMR
+  $ yoto device positions --json
+`
+    )
+    .action((cardId, options) => getDevicePositions(cardId, { json: options.json }));
+
+  device
+    .command("sync <sourceDeviceId>")
+    .description("Move other devices to the card/chapter/track/position a device is at")
+    .option("--to <deviceIds>", "Comma-separated target device IDs")
+    .option("--all", "Target every other device")
+    .option("--yes", "Skip the confirmation prompt")
+    .option("--json", "Output as JSON")
+    .addHelpText(
+      "after",
+      `
+Arguments:
+  sourceDeviceId    The device whose current position to copy
+
+Exactly one of --to or --all is required. Without --yes, prints what will
+happen and asks for confirmation before touching other devices.
+
+Requires the 'family:devices:control' scope — if this errors with an auth
+or scope problem, run 'yoto login' again to pick it up.
+
+Examples:
+  $ yoto device sync Y1234 --all
+  $ yoto device sync Y1234 --to Y5678,Y9999
+  $ yoto device sync Y1234 --to Y5678 --yes
+`
+    )
+    .action((sourceDeviceId, options) =>
+      syncDevicePosition(sourceDeviceId, {
+        to: options.to,
+        all: options.all,
+        yes: options.yes,
+        json: options.json,
+      })
+    );
 }

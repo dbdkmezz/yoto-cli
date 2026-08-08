@@ -31,9 +31,11 @@ import {
 const AUTH_BASE_URL = "https://login.yotoplay.com";
 const API_BASE_URL = "https://api.yotoplay.com";
 
-// Library read + Make-Your-Own content management (upload/create/edit) + a
-// refresh token. Enough for the CLI's content/icon/device commands.
-const DEFAULT_SCOPE = "offline_access family:library:view user:content:manage";
+// Library read + Make-Your-Own content management (upload/create/edit) +
+// device control (needed for the MQTT connection behind `device positions`/
+// `device sync`) + a refresh token.
+const DEFAULT_SCOPE =
+  "offline_access family:library:view user:content:manage family:devices:control";
 
 export interface YotoClientConfig {
   clientId: string;

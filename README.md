@@ -19,7 +19,7 @@ library in one go:
 - **Playlists** — create, list, update, and delete the cards in your library
 - **Audio** — upload local `.mp3`/`.m4a` files; the CLI uploads, waits for Yoto's transcoder, and adds the result to a playlist
 - **Icons** — upload custom 16x16 pixel-art icons (auto-resized) or pick from Yoto's public set
-- **Devices** — see your players and control playback (play, pause, next, volume)
+- **Devices** — see your players and control playback (play, pause, next, volume), see exactly where each one is in a playlist, and sync one device's position to the rest
 
 ## Installation
 
@@ -160,7 +160,17 @@ yoto device stop <deviceId>
 yoto device next <deviceId>
 yoto device previous <deviceId>
 yoto device volume <deviceId> <0-100>
+
+yoto device positions                        # where is every device right now?
+yoto device positions <cardId>               # ...restricted to devices on this card
+yoto device sync <sourceDeviceId> --all      # move every other device to that position
+yoto device sync <sourceDeviceId> --to <id1,id2>
 ```
+
+`positions` and `sync` talk to Yoto's players over MQTT (not the REST API) to
+get/set exact seconds-level position — that's the only way to resume mid-track.
+This needs the `family:devices:control` scope, added in this CLI version; if
+you logged in before it existed, run `yoto login` again to pick it up.
 
 Run `yoto --help` for the full command list.
 
