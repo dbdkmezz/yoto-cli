@@ -219,10 +219,18 @@ export const GetDevicesResponseSchema = z.object({
 });
 
 // Live playback state, pushed by the device itself over MQTT
-// (`/device/{deviceId}/data/events`) rather than fetched via REST — this is
+// (`device/{deviceId}/data/events`) rather than fetched via REST — this is
 // the only source for seconds-level position and for how stale a report is
 // (`eventUtc`). .passthrough() because the on-wire payload isn't formally
 // documented; unknown fields shouldn't break parsing.
+//
+// Confirmed against a real idle device:
+// {"repeatAll":false,"volume":12,"volumeMax":16,"cardId":"none",
+//  "playbackStatus":"stopped","streaming":false,"playbackWait":false,
+//  "sleepTimerActive":false,"eventUtc":1786187630}
+// Two surprises vs. the docs: `eventUtc` is Unix seconds (a number), not an
+// ISO string — see toEventDate() below. And `cardId` is the literal string
+// "none" when idle, not an absent field — see hasCard() below.
 export const DeviceEventSchema = z.object({
   cardId: z.string().optional(),
   chapterKey: z.string().optional(),
@@ -232,8 +240,19 @@ export const DeviceEventSchema = z.object({
   position: z.number().optional(),
   trackLength: z.number().optional(),
   playbackStatus: z.string().optional(),
-  eventUtc: z.string().optional(),
+  eventUtc: z.number().optional(),
 }).passthrough();
+
+// `cardId` is the literal string "none" (not absent) when a device isn't
+// on any card — use this instead of a bare truthiness/optional check.
+export function hasCard(state: DeviceEvent | null | undefined): state is DeviceEvent & { cardId: string } {
+  return !!state?.cardId && state.cardId !== "none";
+}
+
+// `eventUtc` is Unix seconds, not milliseconds and not an ISO string.
+export function toEventDate(eventUtc: number | undefined): Date | null {
+  return eventUtc === undefined ? null : new Date(eventUtc * 1000);
+}
 
 // ============ API Error Schema ============
 

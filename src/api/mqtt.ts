@@ -2,10 +2,26 @@ import mqtt from "mqtt";
 import { DeviceEventSchema, type DeviceEvent } from "./schemas.ts";
 
 // Yoto players don't expose live playback position over REST — only via
-// this AWS IoT MQTT broker. Endpoint, auth scheme, and topic names are from
+// this AWS IoT MQTT broker. Endpoint and auth scheme are from
 // https://yoto.dev/players-mqtt/. One short-lived connection per device
 // (Yoto's own client ID convention is per-device), not a shared fleet
 // connection.
+//
+// Two things verified empirically against a real device that the docs got
+// wrong/inconsistent on:
+// - Topics have NO leading slash (`device/{id}/...`, not `/device/{id}/...`).
+//   AWS IoT's custom authorizer matches topic strings exactly; a leading
+//   slash mismatch doesn't error the subscribe/publish — it silently kills
+//   the whole connection right after, which looked identical to "device
+//   didn't respond" until traced with a raw WebSocket close-code hook.
+// - `forceNativeWebSocket: true` is required under Bun: mqtt.js's default
+//   Node transport calls `ws`'s `createWebSocketStream`, which Bun doesn't
+//   implement ("Not supported yet in Bun"), and it throws synchronously
+//   inside `mqtt.connect()` — silently turning into a rejected promise
+//   wherever this is awaited inside Promise.allSettled. Forcing the
+//   browser-style native-WebSocket transport sidesteps that; the ALPN
+//   option from Yoto's own sample is irrelevant to it (native WebSocket
+//   doesn't expose ALPN) and connections work fine without it.
 const MQTT_URL = "wss://aqrphjqbp3u2z-ats.iot.eu-west-2.amazonaws.com/mqtt";
 const RESPONSE_TIMEOUT_MS = 5000;
 
@@ -16,10 +32,10 @@ function connectToDevice(deviceId: string, accessToken: string) {
     username: `${deviceId}?x-amz-customauthorizer-name=PublicJWTAuthorizer`,
     password: accessToken,
     clientId: `DASH${deviceId}`,
-    ALPNProtocols: ["x-amzn-mqtt-ca"],
     keepalive: 300,
     reconnectPeriod: 0,
     connectTimeout: RESPONSE_TIMEOUT_MS,
+    forceNativeWebSocket: true,
   });
 }
 
@@ -46,12 +62,12 @@ export async function getDevicePlaybackState(
     const timeout = setTimeout(() => finish(null), RESPONSE_TIMEOUT_MS);
 
     client.on("connect", () => {
-      client.subscribe(`/device/${deviceId}/data/events`, (err) => {
+      client.subscribe(`device/${deviceId}/data/events`, (err) => {
         if (err) {
           finish(null);
           return;
         }
-        client.publish(`/device/${deviceId}/command/events/request`, "");
+        client.publish(`device/${deviceId}/command/events/request`, "");
       });
     });
 
@@ -106,7 +122,7 @@ export async function setDevicePlayback(
 
     client.on("connect", () => {
       client.publish(
-        `/device/${deviceId}/command/card/start`,
+        `device/${deviceId}/command/card/start`,
         JSON.stringify(command),
         (err) => finish(!err)
       );

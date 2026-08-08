@@ -1,7 +1,7 @@
 import { getAuthenticatedClient } from "./auth.ts";
 import { info, table, json, success, error, confirm } from "../utils/output.ts";
 import { getDevicePlaybackState, setDevicePlayback, toCardUri } from "../api/mqtt.ts";
-import type { Device, DeviceEvent } from "../api/schemas.ts";
+import { hasCard, type Device, type DeviceEvent } from "../api/schemas.ts";
 
 const STALE_THRESHOLD_SECONDS = 30;
 
@@ -9,14 +9,13 @@ function formatDuration(seconds: number): string {
   return `${Math.floor(seconds / 60)}:${String(Math.round(seconds % 60)).padStart(2, "0")}`;
 }
 
-function ageSeconds(eventUtc: string | undefined): number | null {
-  if (!eventUtc) return null;
-  const then = new Date(eventUtc).getTime();
-  if (Number.isNaN(then)) return null;
-  return Math.max(0, Math.round((Date.now() - then) / 1000));
+// eventUtc is Unix seconds (confirmed against a real device), not ms/ISO.
+function ageSeconds(eventUtc: number | undefined): number | null {
+  if (eventUtc === undefined) return null;
+  return Math.max(0, Math.round(Date.now() / 1000 - eventUtc));
 }
 
-function formatAge(eventUtc: string | undefined): string {
+function formatAge(eventUtc: number | undefined): string {
   const seconds = ageSeconds(eventUtc);
   if (seconds === null) return "-";
   if (seconds < 60) return `${seconds}s ago`;
@@ -143,15 +142,15 @@ export async function getDevicePositions(
     return { device, state };
   });
 
-  const filtered = cardId ? rows.filter((r) => r.state?.cardId === cardId) : rows;
+  const filtered = cardId ? rows.filter((r) => hasCard(r.state) && r.state.cardId === cardId) : rows;
 
   if (options.json) {
     json(
       filtered.map(({ device, state }) => ({
         deviceId: device.deviceId,
         name: device.name,
-        cardId: state?.cardId,
-        cardTitle: state?.cardId ? cardTitles.get(state.cardId) : undefined,
+        cardId: hasCard(state) ? state.cardId : undefined,
+        cardTitle: hasCard(state) ? cardTitles.get(state.cardId) : undefined,
         chapterKey: state?.chapterKey,
         trackKey: state?.trackKey,
         position: state?.position,
@@ -186,7 +185,7 @@ export async function getDevicePositions(
   table(
     ["Device", "Card", "Chapter", "Track", "Position", "Status", "Updated"],
     filtered.map(({ device, state }) => {
-      const card = state?.cardId
+      const card = hasCard(state)
         ? `${state.cardId}${cardTitles.has(state.cardId) ? ` ${cardTitles.get(state.cardId)}` : ""}`
         : "-";
       return [
@@ -230,7 +229,7 @@ export async function syncDevicePosition(
   }
 
   const sourceState = await getDevicePlaybackState(sourceDeviceId, accessToken);
-  if (!sourceState?.cardId) {
+  if (!hasCard(sourceState)) {
     error(`${source.name} isn't currently on a card — nothing to sync.`);
     process.exit(1);
   }
