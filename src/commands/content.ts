@@ -1,50 +1,9 @@
 import { readFile } from "fs/promises";
 import { basename } from "path";
-import { stat } from "fs/promises";
 import { getAuthenticatedClient } from "./auth.ts";
 import { success, error, info, table, json } from "../utils/output.ts";
+import { resolveIcon } from "../utils/icon.ts";
 
-// Smart icon resolver: accepts file path or mediaId/hash
-async function resolveIcon(icon: string): Promise<string> {
-  // If already a yoto:# reference, extract the mediaId
-  if (icon.startsWith("yoto:#")) {
-    return icon.slice(6); // Remove "yoto:#" prefix
-  }
-
-  // Check if it looks like a file path
-  const isFilePath = icon.startsWith("./") ||
-                     icon.startsWith("../") ||
-                     icon.startsWith("/") ||
-                     /\.(png|jpg|jpeg|gif)$/i.test(icon);
-
-  if (isFilePath) {
-    // Verify file exists
-    try {
-      await stat(icon);
-    } catch {
-      error(`Icon file not found: ${icon}`);
-      process.exit(1);
-    }
-
-    // Upload the icon
-    info(`Uploading icon...`);
-    const client = await getAuthenticatedClient();
-    const file = await readFile(icon);
-    const filename = basename(icon);
-
-    const response = await client.uploadIcon(file, {
-      filename,
-      autoConvert: true,
-    });
-
-    const mediaId = response.displayIcon.mediaId;
-    success(`Icon uploaded`);
-    return mediaId;
-  }
-
-  // Assume it's already a mediaId
-  return icon;
-}
 
 export async function listPlaylists(options: { json?: boolean }): Promise<void> {
   const client = await getAuthenticatedClient();

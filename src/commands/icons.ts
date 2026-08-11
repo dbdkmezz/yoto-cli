@@ -6,6 +6,7 @@ import { success, info, table, json } from "../utils/output.ts";
 export async function listPublicIcons(options: {
   json?: boolean;
   tag?: string;
+  search?: string;
 }): Promise<void> {
   const client = await getAuthenticatedClient();
   const response = await client.getPublicIcons();
@@ -20,6 +21,15 @@ export async function listPublicIcons(options: {
     );
   }
 
+  if (options.search) {
+    const term = options.search.toLowerCase();
+    icons = icons.filter(
+      (icon) =>
+        (icon.title ?? "").toLowerCase().includes(term) ||
+        icon.publicTags.some((t) => t.toLowerCase().includes(term))
+    );
+  }
+
   if (options.json) {
     json(icons);
     return;
@@ -30,9 +40,15 @@ export async function listPublicIcons(options: {
     return;
   }
 
+  // mediaId is what the content API needs; displayIconId is what the web UI shows.
   table(
-    ["Title", "ID", "Tags"],
-    icons.map((icon) => [icon.title ?? "", icon.displayIconId, icon.publicTags.join(", ")])
+    ["Title", "displayIconId", "mediaId", "Tags"],
+    icons.map((icon) => [
+      icon.title ?? "",
+      icon.displayIconId,
+      icon.mediaId,
+      icon.publicTags.join(", "),
+    ])
   );
 }
 
@@ -51,8 +67,12 @@ export async function listUserIcons(options: { json?: boolean }): Promise<void> 
   }
 
   table(
-    ["ID", "URL"],
-    response.displayIcons.map((icon) => [icon.displayIconId, icon.url])
+    ["displayIconId", "mediaId", "URL"],
+    response.displayIcons.map((icon) => [
+      icon.displayIconId,
+      icon.mediaId,
+      icon.url,
+    ])
   );
 }
 

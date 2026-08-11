@@ -136,6 +136,9 @@ yoto entry add <cardId> "Song Title" --file ./audio.mp3 --icon ./cover.png
 yoto entry update <cardId> <entryIdx> --title "New Title"
 yoto entry update <cardId> <entryIdx> --icon ./cover.png
 
+# Update every entry at once (single write)
+yoto entry update <cardId> --all --icon <displayIconId>
+
 # Delete entry
 yoto entry delete <cardId> <entryIdx>
 ```
@@ -145,9 +148,14 @@ yoto entry delete <cardId> <entryIdx>
 ```bash
 yoto icon list                    # list public icons
 yoto icon list --tag music        # filter by tag
+yoto icon list --search island    # filter by title or tag
 yoto icon list --mine             # list your custom icons
 yoto icon upload ./my-icon.png    # upload custom icon (auto-resizes to 16x16)
 ```
+
+Listings show two IDs. `mediaId` (43 chars) is what the content API stores;
+`displayIconId` (24 chars) is the ID shown in the Yoto web UI. Any `--icon`
+option accepts either, plus a file path or a `yoto:#mediaId` reference.
 
 ### Devices
 

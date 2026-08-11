@@ -15,13 +15,18 @@ export function registerIconCommands(program: Command): void {
     .description("List icons (public or your own)")
     .option("--mine", "List only your uploaded custom icons")
     .option("--tag <tag>", "Filter public icons by tag (e.g., music, animals)")
+    .option("--search <term>", "Filter public icons by title or tag")
     .option("--json", "Output as JSON")
     .addHelpText(
       "after",
       `
+The mediaId column is what --icon options ultimately need; a displayIconId
+works too and is resolved automatically.
+
 Examples:
   $ yoto icon list
   $ yoto icon list --tag music
+  $ yoto icon list --search island
   $ yoto icon list --mine
   $ yoto icon list --tag animals --json
 `
@@ -30,7 +35,11 @@ Examples:
       if (options.mine) {
         return listUserIcons({ json: options.json });
       }
-      return listPublicIcons({ json: options.json, tag: options.tag });
+      return listPublicIcons({
+        json: options.json,
+        tag: options.tag,
+        search: options.search,
+      });
     });
 
   icon

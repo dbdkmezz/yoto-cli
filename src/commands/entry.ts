@@ -3,48 +3,8 @@ import { basename } from "path";
 import { stat } from "fs/promises";
 import { getAuthenticatedClient } from "./auth.ts";
 import { success, error, info, json } from "../utils/output.ts";
+import { resolveIcon } from "../utils/icon.ts";
 
-// Smart icon resolver: accepts file path or mediaId/hash
-async function resolveIcon(icon: string): Promise<string> {
-  // If already a yoto:# reference, extract the mediaId
-  if (icon.startsWith("yoto:#")) {
-    return icon.slice(6); // Remove "yoto:#" prefix
-  }
-
-  // Check if it looks like a file path
-  const isFilePath = icon.startsWith("./") ||
-                     icon.startsWith("../") ||
-                     icon.startsWith("/") ||
-                     /\.(png|jpg|jpeg|gif)$/i.test(icon);
-
-  if (isFilePath) {
-    // Verify file exists
-    try {
-      await stat(icon);
-    } catch {
-      error(`Icon file not found: ${icon}`);
-      process.exit(1);
-    }
-
-    // Upload the icon
-    info(`Uploading icon...`);
-    const client = await getAuthenticatedClient();
-    const file = await readFile(icon);
-    const filename = basename(icon);
-
-    const response = await client.uploadIcon(file, {
-      filename,
-      autoConvert: true,
-    });
-
-    const mediaId = response.displayIcon.mediaId;
-    success(`Icon uploaded`);
-    return mediaId;
-  }
-
-  // Assume it's already a mediaId
-  return icon;
-}
 
 // Shared helper for uploading and transcoding audio
 interface UploadResult {
@@ -221,36 +181,58 @@ export async function addEntry(
   }
 }
 
+// Pass "all" as the index to update every entry in one read-modify-write,
+// rather than one full card round-trip per entry.
 export async function updateEntry(
   cardId: string,
-  entryIndex: number,
+  entryIndex: number | "all",
   options: { title?: string; icon?: string }
 ): Promise<void> {
+  if (!options.title && !options.icon) {
+    error("Nothing to update. Pass --title and/or --icon.");
+    process.exit(1);
+  }
+
   const client = await getAuthenticatedClient();
   const existing = await client.getContent(cardId);
   const card = existing.card;
 
-  const chapter = card.content.chapters[entryIndex];
-  if (!chapter) {
-    error(`Entry ${entryIndex} not found. Use 0-based index.`);
-    process.exit(1);
-  }
-
-  // Update title on both chapter and all tracks
-  if (options.title) {
-    chapter.title = options.title;
-    for (const track of chapter.tracks) {
-      track.title = options.title;
+  let targets;
+  if (entryIndex === "all") {
+    targets = card.content.chapters;
+    if (targets.length === 0) {
+      error(`Playlist ${cardId} has no entries.`);
+      process.exit(1);
     }
+  } else {
+    const chapter = card.content.chapters[entryIndex];
+    if (!chapter) {
+      error(`Entry ${entryIndex} not found. Use 0-based index.`);
+      process.exit(1);
+    }
+    targets = [chapter];
   }
 
-  // Update icon on both chapter and all tracks
-  if (options.icon) {
-    const mediaId = await resolveIcon(options.icon);
-    const iconRef = `yoto:#${mediaId}`;
-    chapter.display = { ...chapter.display, icon16x16: iconRef };
-    for (const track of chapter.tracks) {
-      track.display = { ...track.display, icon16x16: iconRef };
+  // Resolve once, not per entry — it may hit the network or upload a file.
+  const iconRef = options.icon
+    ? `yoto:#${await resolveIcon(options.icon)}`
+    : undefined;
+
+  for (const chapter of targets) {
+    // Update title on both chapter and all tracks
+    if (options.title) {
+      chapter.title = options.title;
+      for (const track of chapter.tracks) {
+        track.title = options.title;
+      }
+    }
+
+    // Update icon on both chapter and all tracks
+    if (iconRef) {
+      chapter.display = { ...chapter.display, icon16x16: iconRef };
+      for (const track of chapter.tracks) {
+        track.display = { ...track.display, icon16x16: iconRef };
+      }
     }
   }
 
@@ -260,7 +242,11 @@ export async function updateEntry(
     metadata: card.metadata,
   });
 
-  success(`Updated entry "${chapter.title}"`);
+  if (entryIndex === "all") {
+    success(`Updated ${targets.length} entries`);
+  } else {
+    success(`Updated entry "${targets[0]!.title}"`);
+  }
 }
 
 export async function deleteEntry(
