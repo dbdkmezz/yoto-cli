@@ -30,7 +30,7 @@ export const AuthErrorSchema = z.object({
 
 const DisplaySchema = z.object({
   /** A `yoto:#<mediaId>` reference to an icon already on the account. */
-  icon16x16: z.string().optional(),
+  icon16x16: z.string().nullish(),
   /**
    * A dynamic icon: a URL the player fetches, rather than an icon it holds.
    *
