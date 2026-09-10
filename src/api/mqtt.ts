@@ -100,7 +100,8 @@ export interface CardStartTarget {
 // with watchForCardTransfer, which waits for a *different* device to pick
 // up a card before publishing the same command.
 //
-// QoS 1 is required here, verified against a real device: at the default
+// QoS 1 is required for card/start (here and in watchForCardTransfer),
+// verified against a real device: at the default
 // QoS 0, `publish()`'s callback fires (the message reached the local socket)
 // but the device never acts on it and AWS IoT gives no error — the command
 // is just silently dropped somewhere between the client and the device, with
@@ -192,24 +193,37 @@ export async function watchForCardTransfer(
     client: connectToDevice(deviceId, accessToken),
   }));
 
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     let settled = false;
+    // Set once card/start has gone out to a candidate: a second event from
+    // that device can land before the broker's PUBACK does, and must not
+    // trigger a duplicate publish.
+    let seekSent = false;
     const timers: ReturnType<typeof setInterval>[] = [];
+    let ackTimeout: ReturnType<typeof setTimeout> | undefined;
 
-    const finish = (result: CardTransferOutcome | null) => {
+    const finish = (result: CardTransferOutcome | null, err?: Error) => {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
+      clearTimeout(ackTimeout);
       timers.forEach(clearInterval);
       sourceClient.end(true);
       candidates.forEach(({ client }) => client.end(true));
-      resolve(result);
+      if (err) reject(err);
+      else resolve(result);
     };
 
     const timeout = setTimeout(() => finish(null), timeoutMs);
 
+    // Subscribe callbacks can fire *after* finish(): mqtt.js errors out any
+    // still-pending subscribe when the connection is force-closed. Without
+    // the `settled` guard that late callback would create an interval after
+    // `timers` had already been cleared, and it would keep the process alive
+    // indefinitely once the command had otherwise completed.
     sourceClient.on("connect", () => {
-      sourceClient.subscribe(`device/${sourceDeviceId}/data/events`, () => {
+      sourceClient.subscribe(`device/${sourceDeviceId}/data/events`, (err) => {
+        if (err || settled) return;
         const request = () =>
           sourceClient.publish(`device/${sourceDeviceId}/command/events/request`, "");
         request();
@@ -231,7 +245,8 @@ export async function watchForCardTransfer(
 
     for (const { deviceId, client } of candidates) {
       client.on("connect", () => {
-        client.subscribe(`device/${deviceId}/data/events`, () => {
+        client.subscribe(`device/${deviceId}/data/events`, (err) => {
+          if (err || settled) return;
           const request = () =>
             client.publish(`device/${deviceId}/command/events/request`, "");
           request();
@@ -240,7 +255,7 @@ export async function watchForCardTransfer(
       });
 
       client.on("message", (_topic, payload) => {
-        if (settled) return;
+        if (settled || seekSent) return;
         let event: DeviceEvent;
         try {
           event = DeviceEventSchema.parse(JSON.parse(payload.toString()));
@@ -255,22 +270,34 @@ export async function watchForCardTransfer(
             ? Math.max(0, Math.round(Date.now() / 1000 - latest.eventUtc))
             : 0;
         const secondsIn = (latest.position ?? 0) + elapsed;
+        // Snapshot now: `latest` can still move between publish and PUBACK,
+        // and the reported outcome must describe what was actually sent.
+        const { chapterKey, trackKey } = latest;
+        seekSent = true;
 
+        // QoS 1 for the same reason as seekDevice (see above): at QoS 0 the
+        // device never acts on card/start. That also changes what the
+        // callback means — PUBACK received, not "written to the socket" —
+        // and mqtt.js never invokes a QoS 1 publish callback if the
+        // connection drops first (it parks the message for a reconnect we've
+        // disabled), so bound that wait ourselves rather than sitting out the
+        // whole watch timeout looking like we're still waiting for the card.
+        ackTimeout = setTimeout(
+          () =>
+            finish(
+              null,
+              new Error(`Timed out sending card/start to device ${deviceId} after it picked up the card`)
+            ),
+          RESPONSE_TIMEOUT_MS
+        );
         client.publish(
           `device/${deviceId}/command/card/start`,
-          JSON.stringify({
-            uri: toCardUri(cardId),
-            chapterKey: latest.chapterKey,
-            trackKey: latest.trackKey,
-            secondsIn,
-          }),
-          () =>
-            finish({
-              deviceId,
-              chapterKey: latest.chapterKey,
-              trackKey: latest.trackKey,
-              secondsIn,
-            })
+          JSON.stringify({ uri: toCardUri(cardId), chapterKey, trackKey, secondsIn }),
+          { qos: 1 },
+          (err) => {
+            if (err) finish(null, err);
+            else finish({ deviceId, chapterKey, trackKey, secondsIn });
+          }
         );
       });
 
