@@ -377,6 +377,25 @@ function parseIntOption(value: string | undefined, label: string): number | unde
   return parsed;
 }
 
+// Accepts plain seconds ("30") or an ffmpeg-style clock time ("3:00",
+// "1:02:03") — the format most audio/video tools use for seek positions,
+// and easier to read than raw seconds once you're more than a minute in.
+function parseTimeOption(value: string | undefined, label: string): number | undefined {
+  if (value === undefined) return undefined;
+  if (/^\d+$/.test(value)) return parseInt(value, 10);
+
+  const parts = value.split(":");
+  if (parts.length < 2 || parts.length > 3 || parts.some((p) => !/^\d+$/.test(p))) {
+    error(
+      `${label} must be a number of seconds or a clock time like "3:00" or "1:02:03", got "${value}".`
+    );
+    process.exit(1);
+  }
+  const padded = parts.length === 2 ? ["0", ...parts] : parts;
+  const [hours, minutes, seconds] = padded.map((p) => parseInt(p, 10));
+  return (hours ?? 0) * 3600 + (minutes ?? 0) * 60 + (seconds ?? 0);
+}
+
 export async function seekDevicePosition(
   deviceId: string,
   options: {
@@ -402,8 +421,8 @@ export async function seekDevicePosition(
 
   const chapterOpt = parseIntOption(options.chapter, "--chapter");
   const trackOpt = parseIntOption(options.track, "--track");
-  const secondsOpt = parseIntOption(options.seconds, "--seconds");
-  const fromEndOpt = parseIntOption(options.fromEnd, "--from-end");
+  const secondsOpt = parseTimeOption(options.seconds, "--seconds");
+  const fromEndOpt = parseTimeOption(options.fromEnd, "--from-end");
 
   let cardId = options.card;
   if (!cardId) {

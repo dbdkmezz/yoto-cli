@@ -191,8 +191,14 @@ Examples:
       "Track number (1-based). With no --chapter, counts across all chapters in order " +
         "(the common case: one track per chapter). With --chapter, counts within that chapter (default 1)"
     )
-    .option("--seconds <n>", "Position in seconds from the start of the track (default 0)")
-    .option("--from-end <n>", "Position in seconds before the end of the track")
+    .option(
+      "--seconds <time>",
+      "Position from the start of the track — seconds, or a clock time like 3:00 (default 0)"
+    )
+    .option(
+      "--from-end <time>",
+      "Position before the end of the track — seconds, or a clock time like 3:00"
+    )
     .option("--card <cardId>", "Card to seek on (default: whatever card the device is currently on)")
     .option("--json", "Output as JSON")
     .addHelpText(
@@ -202,7 +208,8 @@ Arguments:
   deviceId    The device ID (from 'yoto device list')
 
 Exactly one of --seconds or --from-end sets the position; omit both to jump
-to the start of the track (0s in).
+to the start of the track (0s in). Both accept plain seconds ("30") or a
+clock time ("3:00", "1:02:03").
 
 The device confirms the command quickly, but takes longer to actually get
 there — several seconds, more the deeper the target is into the track — so
@@ -213,7 +220,7 @@ Requires the 'family:devices:control' scope — if this errors with an auth
 or scope problem, run 'yoto login' again to pick it up.
 
 Examples:
-  $ yoto device seek Y12345678 --track 7 --from-end 180
+  $ yoto device seek Y12345678 --track 7 --from-end 3:00
   $ yoto device seek Y12345678 --track 7 --seconds 30
   $ yoto device seek Y12345678 --chapter 2 --track 3 --seconds 0
   $ yoto device seek Y12345678 --track 1 --card 5ukMR

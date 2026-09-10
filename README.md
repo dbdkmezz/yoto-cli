@@ -165,7 +165,7 @@ yoto device positions                        # where is every device right now?
 yoto device positions <cardId>               # ...restricted to devices on this card
 yoto device transfer <sourceDeviceId>        # move the card to another device without losing your place
 
-yoto device seek <deviceId> --track 7 --from-end 180   # jump to 3 minutes before the end of track 7
+yoto device seek <deviceId> --track 7 --from-end 3:00  # jump to 3 minutes before the end of track 7
 yoto device seek <deviceId> --track 7 --seconds 30     # ...or 30 seconds into track 7
 yoto device seek <deviceId> --chapter 2 --track 3      # chapter/track together, for cards with several tracks per chapter
 ```
@@ -184,7 +184,8 @@ across every track on the card in order (the common case: one track per
 chapter, so "track 7" just means the 7th chapter); with `--chapter`, `--track`
 counts within that chapter instead. `--seconds` and `--from-end` are two ways
 to say the same position — from the start of the track, or back from its end
-— and are mutually exclusive. Expect a delay of several seconds (longer the
+— and are mutually exclusive; both take plain seconds (`30`) or a clock time
+(`3:00`, `1:02:03`). Expect a delay of several seconds (longer the
 deeper the seek target is into the track) before the device's reported
 position catches up — it has to decode forward to the target offset rather
 than jump straight there.
