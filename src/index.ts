@@ -59,6 +59,7 @@ export {
   sendCommand,
   getDevicePositions,
   transferDevicePosition,
+  seekDevicePosition,
 } from "./commands/devices.ts";
 
 // Config utilities

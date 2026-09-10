@@ -4,7 +4,14 @@ import { getDevicePlaybackState, watchForCardTransfer, seekDevice } from "../api
 import { hasCard, type Chapter, type Device, type DeviceEvent } from "../api/schemas.ts";
 
 function formatDuration(seconds: number): string {
-  return `${Math.floor(seconds / 60)}:${String(Math.round(seconds % 60)).padStart(2, "0")}`;
+  // Round the total first — rounding the remainder alone can print "0:60".
+  const total = Math.max(0, Math.round(seconds));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const secs = String(total % 60).padStart(2, "0");
+  return hours > 0
+    ? `${hours}:${String(minutes).padStart(2, "0")}:${secs}`
+    : `${minutes}:${secs}`;
 }
 
 // eventUtc is Unix seconds (confirmed against a real device), not ms/ISO.
@@ -252,9 +259,8 @@ export async function transferDevicePosition(
     return;
   }
 
-  const timeoutSeconds = options.timeout
-    ? parseInt(options.timeout, 10)
-    : DEFAULT_TRANSFER_TIMEOUT_SECONDS;
+  const timeoutSeconds =
+    parsePositiveIntOption(options.timeout, "--timeout") ?? DEFAULT_TRANSFER_TIMEOUT_SECONDS;
 
   const cardLabel = cardTitles.get(sourceState.cardId)
     ? `"${cardTitles.get(sourceState.cardId)}"`
@@ -364,17 +370,18 @@ function resolveSeekTarget(
     };
   }
 
-  throw new Error("Specify --track (and optionally --chapter) to say where to jump to.");
+  throw new Error("Specify --track and/or --chapter to say where to jump to.");
 }
 
-function parseIntOption(value: string | undefined, label: string): number | undefined {
+// Strict: rejects "1.5", "3abc", "0" and negatives rather than letting
+// parseInt quietly truncate them — these are 1-based indexes and timeouts.
+function parsePositiveIntOption(value: string | undefined, label: string): number | undefined {
   if (value === undefined) return undefined;
-  const parsed = parseInt(value, 10);
-  if (Number.isNaN(parsed)) {
-    error(`${label} must be a number, got "${value}".`);
+  if (!/^\d+$/.test(value) || parseInt(value, 10) < 1) {
+    error(`${label} must be a whole number of 1 or more, got "${value}".`);
     process.exit(1);
   }
-  return parsed;
+  return parseInt(value, 10);
 }
 
 // Accepts plain seconds ("30") or an ffmpeg-style clock time ("3:00",
@@ -392,8 +399,14 @@ function parseTimeOption(value: string | undefined, label: string): number | und
     process.exit(1);
   }
   const padded = parts.length === 2 ? ["0", ...parts] : parts;
-  const [hours, minutes, seconds] = padded.map((p) => parseInt(p, 10));
-  return (hours ?? 0) * 3600 + (minutes ?? 0) * 60 + (seconds ?? 0);
+  const [hours = 0, minutes = 0, seconds = 0] = padded.map((p) => parseInt(p, 10));
+  // Seconds are always a 0-59 field; minutes only once hours are present
+  // ("90:00" meaning ninety minutes is fine, "1:90:00" isn't).
+  if (seconds > 59 || (parts.length === 3 && minutes > 59)) {
+    error(`${label} isn't a valid clock time: "${value}" (minutes and seconds must be 0-59).`);
+    process.exit(1);
+  }
+  return hours * 3600 + minutes * 60 + seconds;
 }
 
 export async function seekDevicePosition(
@@ -419,8 +432,8 @@ export async function seekDevicePosition(
     process.exit(1);
   }
 
-  const chapterOpt = parseIntOption(options.chapter, "--chapter");
-  const trackOpt = parseIntOption(options.track, "--track");
+  const chapterOpt = parsePositiveIntOption(options.chapter, "--chapter");
+  const trackOpt = parsePositiveIntOption(options.track, "--track");
   const secondsOpt = parseTimeOption(options.seconds, "--seconds");
   const fromEndOpt = parseTimeOption(options.fromEnd, "--from-end");
 
