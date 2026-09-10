@@ -164,15 +164,30 @@ yoto device volume <deviceId> <0-100>
 yoto device positions                        # where is every device right now?
 yoto device positions <cardId>               # ...restricted to devices on this card
 yoto device transfer <sourceDeviceId>        # move the card to another device without losing your place
+
+yoto device seek <deviceId> --track 7 --from-end 180   # jump to 3 minutes before the end of track 7
+yoto device seek <deviceId> --track 7 --seconds 30     # ...or 30 seconds into track 7
+yoto device seek <deviceId> --chapter 2 --track 3      # chapter/track together, for cards with several tracks per chapter
 ```
 
-`positions` and `transfer` talk to Yoto's players over MQTT (not the REST
-API) to get/set exact seconds-level position — that's the only way to resume
-mid-track. Yoto players are a single physical card moved between devices, so
-`transfer` doesn't copy a position instantly — it watches: run it while the
-source device is still playing, physically move the card to another device,
-and it jumps that device to the same chapter/track/second the instant it
-picks the card up, instead of restarting from the top.
+`positions`, `transfer`, and `seek` talk to Yoto's players over MQTT (not the
+REST API) to get/set exact seconds-level position — that's the only way to
+resume mid-track. Yoto players are a single physical card moved between
+devices, so `transfer` doesn't copy a position instantly — it watches: run it
+while the source device is still playing, physically move the card to
+another device, and it jumps that device to the same chapter/track/second
+the instant it picks the card up, instead of restarting from the top.
+
+`seek` jumps a device straight to a chapter/track and position, without
+needing another device involved. With no `--chapter`, `--track` counts
+across every track on the card in order (the common case: one track per
+chapter, so "track 7" just means the 7th chapter); with `--chapter`, `--track`
+counts within that chapter instead. `--seconds` and `--from-end` are two ways
+to say the same position — from the start of the track, or back from its end
+— and are mutually exclusive. Expect a delay of several seconds (longer the
+deeper the seek target is into the track) before the device's reported
+position catches up — it has to decode forward to the target offset rather
+than jump straight there.
 
 All `device` commands need Yoto's `family:devices:view` and/or
 `family:devices:control` scopes; if you logged in before this CLI version

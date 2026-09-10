@@ -83,11 +83,77 @@ export async function getDevicePlaybackState(
   });
 }
 
-// Not verified against a live device — Yoto's docs give this as the URI
-// format but this codebase hasn't confirmed it against a real card/start
-// response yet.
+// Confirmed against a real device: this is the URI format card/start
+// expects.
 export function toCardUri(cardId: string): string {
   return `https://yoto.io/${cardId}`;
+}
+
+export interface CardStartTarget {
+  cardId: string;
+  chapterKey?: string;
+  trackKey?: string;
+  secondsIn: number;
+}
+
+// Directly jumps a device to a chapter/track/position, on demand — contrast
+// with watchForCardTransfer, which waits for a *different* device to pick
+// up a card before publishing the same command.
+//
+// QoS 1 is required here, verified against a real device: at the default
+// QoS 0, `publish()`'s callback fires (the message reached the local socket)
+// but the device never acts on it and AWS IoT gives no error — the command
+// is just silently dropped somewhere between the client and the device, with
+// nothing to catch. QoS 1 gets an actual PUBACK from the broker and the
+// device does act on it.
+//
+// Resolving still only means the broker acknowledged the publish, not that
+// the device finished acting on it — a device deep-seeking into a track
+// (e.g. `secondsIn` near the end of a long file) has been observed taking
+// 15s+ to reflect the new chapter/track/position in its live status/MQTT
+// events, seemingly proportional to how far into the track the seek target
+// is (consistent with decoding forward to the offset rather than a true
+// random-access seek). Callers polling `getDevicePlaybackState` right after
+// a seek should expect a delay, not treat a stale reading as failure.
+export async function seekDevice(
+  deviceId: string,
+  accessToken: string,
+  target: CardStartTarget
+): Promise<void> {
+  const client = connectToDevice(deviceId, accessToken);
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (err?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      client.end(true);
+      if (err) reject(err);
+      else resolve();
+    };
+
+    const timeout = setTimeout(
+      () => finish(new Error("Timed out sending seek command to device")),
+      RESPONSE_TIMEOUT_MS
+    );
+
+    client.on("connect", () => {
+      client.publish(
+        `device/${deviceId}/command/card/start`,
+        JSON.stringify({
+          uri: toCardUri(target.cardId),
+          chapterKey: target.chapterKey,
+          trackKey: target.trackKey,
+          secondsIn: target.secondsIn,
+        }),
+        { qos: 1 },
+        (err) => finish(err ?? undefined)
+      );
+    });
+
+    client.on("error", (err) => finish(err));
+  });
 }
 
 const REFRESH_INTERVAL_MS = 10_000;

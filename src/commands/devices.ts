@@ -1,7 +1,7 @@
 import { getAuthenticatedClient } from "./auth.ts";
 import { info, table, json, success, error } from "../utils/output.ts";
-import { getDevicePlaybackState, watchForCardTransfer } from "../api/mqtt.ts";
-import { hasCard, type Device, type DeviceEvent } from "../api/schemas.ts";
+import { getDevicePlaybackState, watchForCardTransfer, seekDevice } from "../api/mqtt.ts";
+import { hasCard, type Chapter, type Device, type DeviceEvent } from "../api/schemas.ts";
 
 function formatDuration(seconds: number): string {
   return `${Math.floor(seconds / 60)}:${String(Math.round(seconds % 60)).padStart(2, "0")}`;
@@ -298,5 +298,172 @@ export async function transferDevicePosition(
   success(
     `${targetName} picked up the card — jumped to ` +
       `ch${outcome.chapterKey ?? "?"}/tr${outcome.trackKey ?? "?"} @${formatDuration(outcome.secondsIn)}`
+  );
+}
+
+interface SeekTarget {
+  chapterKey: string;
+  trackKey: string;
+  chapterTitle: string;
+  trackTitle: string;
+  duration: number | null;
+}
+
+// "Track N" for a Yoto card almost always means the Nth chapter (most cards
+// are one track per chapter) — so with no --chapter given, N indexes the
+// tracks of every chapter flattened in order, not just the first chapter's.
+// --chapter narrows that to one chapter, and --track then indexes within it.
+function resolveSeekTarget(
+  chapters: Chapter[],
+  options: { chapter?: number; track?: number }
+): SeekTarget {
+  if (chapters.length === 0) {
+    throw new Error("This card has no chapters.");
+  }
+
+  if (options.chapter !== undefined) {
+    const chapter = chapters[options.chapter - 1];
+    if (!chapter) {
+      throw new Error(
+        `Chapter ${options.chapter} doesn't exist — this card has ${chapters.length} chapter(s).`
+      );
+    }
+    const trackIndex = options.track ?? 1;
+    const track = chapter.tracks[trackIndex - 1];
+    if (!track) {
+      throw new Error(
+        `Track ${trackIndex} doesn't exist in chapter ${options.chapter} ` +
+          `("${chapter.title}") — it has ${chapter.tracks.length} track(s).`
+      );
+    }
+    return {
+      chapterKey: chapter.key,
+      trackKey: track.key,
+      chapterTitle: chapter.title,
+      trackTitle: track.title,
+      duration: track.duration ?? chapter.duration ?? null,
+    };
+  }
+
+  if (options.track !== undefined) {
+    const flattened = chapters.flatMap((chapter) =>
+      chapter.tracks.map((track) => ({ chapter, track }))
+    );
+    const entry = flattened[options.track - 1];
+    if (!entry) {
+      throw new Error(
+        `Track ${options.track} doesn't exist — this card has ${flattened.length} track(s) in total.`
+      );
+    }
+    return {
+      chapterKey: entry.chapter.key,
+      trackKey: entry.track.key,
+      chapterTitle: entry.chapter.title,
+      trackTitle: entry.track.title,
+      duration: entry.track.duration ?? entry.chapter.duration ?? null,
+    };
+  }
+
+  throw new Error("Specify --track (and optionally --chapter) to say where to jump to.");
+}
+
+function parseIntOption(value: string | undefined, label: string): number | undefined {
+  if (value === undefined) return undefined;
+  const parsed = parseInt(value, 10);
+  if (Number.isNaN(parsed)) {
+    error(`${label} must be a number, got "${value}".`);
+    process.exit(1);
+  }
+  return parsed;
+}
+
+export async function seekDevicePosition(
+  deviceId: string,
+  options: {
+    chapter?: string;
+    track?: string;
+    seconds?: string;
+    fromEnd?: string;
+    card?: string;
+    json?: boolean;
+  }
+): Promise<void> {
+  const client = await getAuthenticatedClient();
+  const accessToken = client.getTokens().accessToken;
+  if (!accessToken) {
+    error("Not authenticated. Please login first.");
+    process.exit(1);
+  }
+
+  if (options.seconds !== undefined && options.fromEnd !== undefined) {
+    error("Specify only one of --seconds or --from-end, not both.");
+    process.exit(1);
+  }
+
+  const chapterOpt = parseIntOption(options.chapter, "--chapter");
+  const trackOpt = parseIntOption(options.track, "--track");
+  const secondsOpt = parseIntOption(options.seconds, "--seconds");
+  const fromEndOpt = parseIntOption(options.fromEnd, "--from-end");
+
+  let cardId = options.card;
+  if (!cardId) {
+    const state = await getDevicePlaybackState(deviceId, accessToken);
+    if (!hasCard(state)) {
+      error(
+        "Couldn't find a card currently on this device. Pass --card <cardId> to target one explicitly."
+      );
+      process.exit(1);
+    }
+    cardId = state.cardId;
+  }
+
+  const { card } = await client.getContent(cardId);
+
+  let target: SeekTarget;
+  try {
+    target = resolveSeekTarget(card.content.chapters, { chapter: chapterOpt, track: trackOpt });
+  } catch (err) {
+    error(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  }
+
+  let secondsIn: number;
+  if (fromEndOpt !== undefined) {
+    if (target.duration === null) {
+      error(
+        `Don't know the duration of "${target.trackTitle}" — can't compute a position from the end. Use --seconds instead.`
+      );
+      process.exit(1);
+    }
+    secondsIn = Math.max(0, target.duration - fromEndOpt);
+  } else {
+    secondsIn = secondsOpt ?? 0;
+  }
+
+  await seekDevice(deviceId, accessToken, {
+    cardId,
+    chapterKey: target.chapterKey,
+    trackKey: target.trackKey,
+    secondsIn,
+  });
+
+  if (options.json) {
+    json({
+      ok: true,
+      deviceId,
+      cardId,
+      chapterKey: target.chapterKey,
+      trackKey: target.trackKey,
+      chapterTitle: target.chapterTitle,
+      trackTitle: target.trackTitle,
+      secondsIn,
+      duration: target.duration,
+    });
+    return;
+  }
+
+  success(
+    `Jumped to "${target.trackTitle}" @ ${formatDuration(secondsIn)}` +
+      (target.duration !== null ? ` / ${formatDuration(target.duration)}` : "")
   );
 }

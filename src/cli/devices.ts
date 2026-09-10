@@ -5,6 +5,7 @@ import {
   sendCommand,
   getDevicePositions,
   transferDevicePosition,
+  seekDevicePosition,
 } from "../commands/devices.ts";
 
 export function registerDeviceCommands(program: Command): void {
@@ -177,6 +178,54 @@ Examples:
       transferDevicePosition(sourceDeviceId, {
         to: options.to,
         timeout: options.timeout,
+        json: options.json,
+      })
+    );
+
+  device
+    .command("seek <deviceId>")
+    .description("Jump a device straight to a chapter/track and position")
+    .option("--chapter <n>", "Chapter number (1-based); track numbers within it if given")
+    .option(
+      "--track <n>",
+      "Track number (1-based). With no --chapter, counts across all chapters in order " +
+        "(the common case: one track per chapter). With --chapter, counts within that chapter (default 1)"
+    )
+    .option("--seconds <n>", "Position in seconds from the start of the track (default 0)")
+    .option("--from-end <n>", "Position in seconds before the end of the track")
+    .option("--card <cardId>", "Card to seek on (default: whatever card the device is currently on)")
+    .option("--json", "Output as JSON")
+    .addHelpText(
+      "after",
+      `
+Arguments:
+  deviceId    The device ID (from 'yoto device list')
+
+Exactly one of --seconds or --from-end sets the position; omit both to jump
+to the start of the track (0s in).
+
+The device confirms the command quickly, but takes longer to actually get
+there — several seconds, more the deeper the target is into the track — so
+'yoto device positions' may show the old position for a bit after this
+returns.
+
+Requires the 'family:devices:control' scope — if this errors with an auth
+or scope problem, run 'yoto login' again to pick it up.
+
+Examples:
+  $ yoto device seek Y12345678 --track 7 --from-end 180
+  $ yoto device seek Y12345678 --track 7 --seconds 30
+  $ yoto device seek Y12345678 --chapter 2 --track 3 --seconds 0
+  $ yoto device seek Y12345678 --track 1 --card 5ukMR
+`
+    )
+    .action((deviceId, options) =>
+      seekDevicePosition(deviceId, {
+        chapter: options.chapter,
+        track: options.track,
+        seconds: options.seconds,
+        fromEnd: options.fromEnd,
+        card: options.card,
         json: options.json,
       })
     );
